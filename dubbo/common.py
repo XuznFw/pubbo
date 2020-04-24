@@ -1,13 +1,9 @@
 import inspect
 import enum
+import json
 import util.unicode
 
 FlagEnum = enum.Enum("FlagEnum", ("REQUEST", "RESPONSE"))
-
-
-class ResponseTypeEnum(enum.Enum):
-    EXCEPTION = 0
-    NULL = 2
 
 
 class RequestMessage(object):
@@ -25,19 +21,32 @@ class ResponseMessage(object):
 
 
 class BaseModel(object):
-    def __iter__(self):
-        i = []
+
+    def __members(self):
+        i = {}
         members = inspect.getmembers(self)
         for member in members:
             name, *_ = member
             if name.startswith("_"): continue
             value = getattr(self, name)
-            if isinstance(value, (Parameter,)):
+            if isinstance(value, (BaseModel,)):
                 value = dict(value)
 
-            name = util.unicode.under_score_to_camel(name)  # 下划线转驼峰
-            i.append([name, value])
-        return iter(i)
+            i[name] = value
+        return i
+
+    def __iter__(self):
+
+        r = []
+        m = self.__members()
+        for i in m.keys():
+            name = util.unicode.under_score_to_camel(i)  # 下划线转驼峰
+            r.append([name, m.get(i)])
+        return iter(r)
+
+    def __repr__(self):
+        m = self.__members()
+        return json.dumps(m, indent=2, ensure_ascii=True)
 
 
 class Parameter(BaseModel):
@@ -74,3 +83,9 @@ class GenericException(Exception):
         self.exception_message = exception.exception_message
         self.stack_trace = exception.stack_trace
         self.suppressed_exceptions = exception.suppressed_exceptions
+
+    def __repr__(self):
+        return self.exception_message
+
+    def __str__(self):
+        return self.__repr__()
