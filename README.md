@@ -5,11 +5,10 @@
 ```
 dubbo_client = client.DubboClient("xxx.xx.xx.xx:xxxxx")
 xxx_facade = dubbo_client.proxy("com.xxx.XxxFacade")
-parameter = Parameter("com.xxx.XxxRequest")
+parameter = JavaObject("com.xxx.XxxRequest")
 parameter.xxx = "xxx"
 response = xxx_facade.xxx_method(parameter)
 ```
 
 TODO
-- Hessian2 协议补全
 - 增加测试

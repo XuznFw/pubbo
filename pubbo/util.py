@@ -1,6 +1,10 @@
 import re
 
 
+def create_class(name: str, parents: tuple, attribute: dict):
+    return type(name, parents, attribute)
+
+
 def byte_length(p):
     sniffer = format(p, "#010b")
     if sniffer.startswith("0b0") or sniffer.startswith("0b10"):
@@ -12,7 +16,7 @@ def byte_length(p):
     elif sniffer.startswith("0b11110"):
         length = 4
     else:
-        raise
+        raise Exception("oop")
     return length
 
 

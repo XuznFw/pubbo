@@ -1,7 +1,7 @@
 import socket
-from dubbo.common import *
-from dubbo.serialization import *
-import util.unicode
+from .common import JavaObject, GenericException
+from .serialization import RequestMessage, ResponseTypeEnum, Serialization, FastJSONSerialization
+from .util import under_score_to_camel
 
 
 class InterfaceProxy(object):
@@ -30,27 +30,39 @@ class InterfaceProxy(object):
         message.method_arguments = []
 
         for i in args:
+            if not isinstance(i, (JavaObject,)):
+                i = JavaObject.parse(i)
             message.method_parameter_types.append(i._class)
-            message.method_arguments.append(dict(i))
+            message.method_arguments.append(i.dubbo_value())
 
-        serizlization = FastJSONSerialization()
-        serizlization.encode(message)
+        message = FastJSONSerialization().encode_request(message)
 
-        self.client.connect.send(serizlization.message)
+        self.client.connect.send(message)
 
-        response = self.client.connect.recv(1024 * 4)
-        response = Serialization().decode(response)
+        response = b""
+        while True:
+            # TODO 处理恰好是这个size的情况
+            chunk = self.client.connect.recv(1024)
+            response += chunk
+            if len(chunk) < 1024:
+                break
 
-        if isinstance(response, (Exception,)):
-            raise response
+        response = Serialization().decode_response(response)
+
+        if response.type is ResponseTypeEnum.NULL:
+            return response.message
+        elif response.type is ResponseTypeEnum.VALUE:
+            return JavaObject.parse(response.message).python_value()
+        elif response.type is ResponseTypeEnum.EXCEPTION:
+            raise GenericException(response.message)
         else:
-            return response
+            raise Exception("oop")
 
     def __call__(self, method, *args, **kwargs):
         return self.invoke(method, *args, **kwargs)
 
     def __getattr__(self, method):
-        method = util.unicode.under_score_to_camel(method)
+        method = under_score_to_camel(method)
         return self.Method(self, method)
 
 
