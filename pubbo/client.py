@@ -7,6 +7,7 @@ from .util import under_score_to_camel
 class InterfaceProxy(object):
     client = None
     interface = None
+    service_version = None
 
     class Method(object):
         def __init__(self, proxy, method):
@@ -16,15 +17,16 @@ class InterfaceProxy(object):
         def __call__(self, *args, **kwargs):
             return self.proxy.invoke(self.method, *args, **kwargs)
 
-    def __init__(self, client, interface):
+    def __init__(self, client, interface, service_version):
         self.client = client
         self.interface = interface
+        self.service_version = service_version
 
     def invoke(self, method, *args, **kwargs):
         message = RequestMessage()
         message.dubbo_version = "2.6.2"
         message.service_name = self.interface
-        message.service_version = "1.0.0"
+        message.service_version = self.service_version
         message.method_name = method
         message.method_parameter_types = []
         message.method_arguments = []
@@ -77,5 +79,5 @@ class DubboClient(object):
     def __del__(self):
         self.connect.close()
 
-    def proxy(self, interface):
-        return InterfaceProxy(self, interface)
+    def proxy(self, interface, service_version):
+        return InterfaceProxy(self, interface, service_version)

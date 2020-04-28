@@ -1,7 +1,8 @@
 import inspect
 import enum
 import types
-import time, datetime
+import time
+import datetime
 from .util import under_score_to_camel, camel_to_under_score
 
 
