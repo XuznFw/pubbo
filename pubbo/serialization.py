@@ -1,6 +1,6 @@
 import random
 import json
-from .common import FlagEnum, RequestMessage, ResponseMessage, ResponseTypeEnum
+from .common import FlagEnum, RequestMessage, ResponseMessage, ResponseTypeEnum, ResponseStatusEnum
 from .hessian import Hessian2
 
 
@@ -58,7 +58,12 @@ class Serialization(object):
             if clazz.serialization_id == message[2]:
                 serialization = clazz()
                 break
-        if serialization is None: raise Exception("not found serialization")
+        if serialization is None:
+            raise Exception("not found serialization")
+
+        status = ResponseStatusEnum.response_status(message[3])
+        if status is not ResponseStatusEnum.OK:
+            raise Exception(status.name)
 
         serialization.magic_high = message[0]
         serialization.magic_low = message[1]
