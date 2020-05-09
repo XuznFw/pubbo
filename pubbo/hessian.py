@@ -209,11 +209,11 @@ class Hessian2(object):
             value = 1.0
         elif code == 0x5d:
             b0 = self.__move_one_byte()
-            return b0
+            value = b0
         elif code == 0x5e:
             b1 = self.__move_one_byte()
             b0 = self.__move_one_byte()
-            return (b1 << 8) + b0
+            value = (b1 << 8) + b0
         elif code == 0x5f:
             b3 = self.__move_one_byte()
             b2 = self.__move_one_byte()
