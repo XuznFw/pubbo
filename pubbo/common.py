@@ -113,7 +113,7 @@ class JavaObject(object):
                 value = self._value
             return value
 
-        i = {"class": self._class}
+        i = {}
 
         members = inspect.getmembers(self)
         for member in members:

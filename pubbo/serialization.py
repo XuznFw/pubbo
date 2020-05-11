@@ -109,8 +109,8 @@ class FastJSONSerialization(Serialization):
             '"$invoke"',
             '"Ljava/lang/String;[Ljava/lang/String;[Ljava/lang/Object;"',
             '"{}"'.format(message.method_name),
-            '[{}]'.format("".join(['"{}"'.format(i) for i in message.method_parameter_types])),
-            '[{}]'.format("".join(json.dumps(i, separators=(",", ":")) for i in message.method_arguments)),
+            '[{}]'.format(",".join(['"{}"'.format(i) for i in message.method_parameter_types])),
+            '[{}]'.format(",".join(json.dumps(i, separators=(",", ":")) for i in message.method_arguments)),
             '{}'.format(json.dumps(attachments, separators=(",", ":")))
         ]
         self.variable_part = ("\r\n".join(message_list) + "\r\n").encode("utf-8")
