@@ -3,6 +3,7 @@ import enum
 import types
 import time
 import datetime
+import json
 from .util import under_score_to_camel, camel_to_under_score
 
 
@@ -62,76 +63,139 @@ class ResponseMessage(Message):
     message = None
 
 
-class JavaObject(object):
-    _class = None
-    _value = None
+JAVA_PRIMITIVE_RELATION = {
+    bytes: "java.lang.Byte",
+    bool: "java.lang.Boolean",
+    float: "java.lang.Double",
+    int: "java.lang.Integer",
+    str: "java.lang.String",
+    list: "java.util.List",
+    dict: "java.util.Map",
+    datetime.datetime: "java.util.Date"
+}
 
-    _primitive_relation = {
-        bytes: "java.lang.Byte",
-        bool: "java.lang.Boolean",
-        float: "java.lang.Double",
-        int: "java.lang.Integer",
-        str: "java.lang.String",
-        list: "java.util.List",
-        dict: "java.util.Map",
-        datetime.datetime: "java.util.Date"
-    }
 
-    def __init__(self, clazz):
-        self._class = clazz
+class JavaObjectJsonEncoder(json.JSONEncoder):
 
-    @staticmethod
-    def parse(value):
-        clazz = JavaObject._primitive_relation.get(type(value))
-        if isinstance(value, (dict,)):
-            if "class" in value.keys():
-                clazz = value.pop("class")
+    def serializable_datetime(self, o):
+        return int(time.mktime(o.timetuple())) * 1000
 
-        if clazz is None:
-            raise Exception("java object parse error")
-
-        java_object = JavaObject(clazz)
-        java_object._class = clazz
-
-        if java_object.is_primitive():
-            java_object._value = value
-        else:
-            for k in value.keys():
-                v = value.get(k)
-                name = camel_to_under_score(k)
-                setattr(java_object, name, v)
-        return java_object
-
-    def is_primitive(self):
-        return self._class in self._primitive_relation.values()
-
-    def dubbo_value(self):
-        if self.is_primitive():
-            if type(self._value) is bytes:
-                value = str(self._value, encoding="utf-8")
-            else:
-                value = self._value
-            return value
-
+    def serializable_java_class(self, o):
         i = {}
-
-        members = inspect.getmembers(self)
+        members = inspect.getmembers(o)
         for member in members:
             name, *_ = member
             if name.startswith("_"): continue
             if isinstance(member[1], (types.FunctionType, types.MethodType,)): continue
-            value = getattr(self, name)
-            if isinstance(value, (JavaObject,)):
-                value = value.dubbo_value()
-            name = under_score_to_camel(name)
-            if isinstance(value, (datetime.datetime,)):
-                value = int(time.mktime(value.timetuple())) * 1000
+            value = getattr(o, name)
             i[name] = value
         return i
 
-    def python_value(self):
-        if self.is_primitive():
-            return self._value
+    def serializable_java_primitive_class(self, o):
+        return o.value()
+
+    def serializable_java_enum(self, o):
+        return {"name": o._name}
+
+    def default(self, o):
+        relation = {
+            datetime.datetime: self.serializable_datetime,
+            JavaClass: self.serializable_java_class,
+            JavaPrimitiveClass: self.serializable_java_primitive_class,
+            JavaEnum: self.serializable_java_enum
+        }
+
+        serializable_function = None
+
+        for i in relation.keys():
+            if isinstance(o, (i,)):
+                serializable_function = relation.get(i)
+
+        if serializable_function is not None:
+            return serializable_function(o)
+        else:
+            return super(JavaObjectJsonEncoder, self).default(o)
+
+
+class JavaObjectCamelJsonEncoder(JavaObjectJsonEncoder):
+    def serializable_java_class(self, o):
+        i = {}
+        members = inspect.getmembers(o)
+        for member in members:
+            name, *_ = member
+            if name.startswith("_"): continue
+            if isinstance(member[1], (
+                    types.FunctionType, types.LambdaType, types.CodeType, types.MappingProxyType, types.GeneratorType,
+                    types.CoroutineType, types.AsyncGeneratorType, types.MethodType, types.BuiltinFunctionType,
+                    types.BuiltinMethodType, types.WrapperDescriptorType, types.MethodWrapperType,
+                    types.MethodDescriptorType, types.ClassMethodDescriptorType, types.ModuleType,
+                    types.GetSetDescriptorType, types.MemberDescriptorType
+            )):
+                continue
+            value = getattr(o, name)
+            name = under_score_to_camel(name)
+            i[name] = value
+        return i
+
+
+class JavaObject(object):
+    _class = None
+
+    def __init__(self, clazz):
+        self._class = clazz
+
+    def __repr__(self):
+        return "{}({})".format(self._class, json.dumps(self, cls=JavaObjectJsonEncoder))
+
+    def is_primitive(self):
+        return self._class in JAVA_PRIMITIVE_RELATION.values()
+
+    @staticmethod
+    def parse(value):
+        if isinstance(value, (dict,)):
+            if "class" in value.keys():
+                clazz = JavaClass(value.pop("class"))
+                for k in value.keys():
+                    name = camel_to_under_score(k)
+                    setattr(clazz, name, value.get(k))
+                return clazz
+
+        # 原生类型
+        primitive_class = JAVA_PRIMITIVE_RELATION.get(type(value))
+        if primitive_class is not None:
+            clazz = JavaPrimitiveClass(primitive_class)
+            clazz._value = value
+            return clazz
+
+        raise Exception("java object parse error")
+
+    def value(self):
+        raise Exception("need to overwrite")
+
+
+class JavaClass(JavaObject):
+    def value(self):
+        return self
+
+
+class JavaPrimitiveClass(JavaObject):
+    _value = None
+
+    def __repr__(self):
+        return self._value
+
+    def __iter__(self):
+        return self._value
+
+    def value(self):
+        return self._value
+
+
+class JavaEnum(JavaObject):
+    _name = None
+
+    def __getattr__(self, item):
+        self._name = item
         return self
 
 

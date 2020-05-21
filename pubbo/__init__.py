@@ -1,2 +1,3 @@
 from .client import DubboClient
-from .common import JavaObject
+from .common import JavaClass
+from .common import JavaEnum

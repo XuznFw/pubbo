@@ -35,7 +35,7 @@ class InterfaceProxy(object):
             if not isinstance(i, (JavaObject,)):
                 i = JavaObject.parse(i)
             message.method_parameter_types.append(i._class)
-            message.method_arguments.append(i.dubbo_value())
+            message.method_arguments.append(i)
 
         message = FastJSONSerialization().encode_request(message)
 
@@ -54,7 +54,7 @@ class InterfaceProxy(object):
         if response.type is ResponseTypeEnum.NULL:
             return response.message
         elif response.type is ResponseTypeEnum.VALUE:
-            return JavaObject.parse(response.message).python_value()
+            return JavaObject.parse(response.message).value()
         elif response.type is ResponseTypeEnum.EXCEPTION:
             raise GenericException(response.message)
         else:
