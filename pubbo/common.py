@@ -145,7 +145,7 @@ class JavaObject(object):
         self._class = clazz
 
     def __repr__(self):
-        return "{}({})".format(self._class, json.dumps(self, cls=JavaObjectJsonEncoder))
+        return "{}{}".format(self._class, json.dumps(self, cls=JavaObjectJsonEncoder, ensure_ascii=False))
 
     def is_primitive(self):
         return self._class in JAVA_PRIMITIVE_RELATION.values()
