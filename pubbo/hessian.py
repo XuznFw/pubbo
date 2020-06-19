@@ -1,5 +1,6 @@
 import datetime
-from .util import camel_to_under_score, create_class, byte_length
+from .common import JavaClass
+from .util import camel_to_under_score, byte_length
 
 is_binary = lambda x: x == 0x41 or x == 0x42 or 0x20 <= x <= 0x2f or 0x34 <= x <= 0x37
 is_boolean = lambda x: x == 0x54 or x == 0x46
@@ -26,14 +27,12 @@ class ClassDef(object):
         self.fields = [camel_to_under_score(i) for i in fields]
 
     def new(self):
-        temp = self.name.split(".")
-        class_name = temp.pop(-1)
-        package = ".".join(temp)
+        o = JavaClass(self.name)
 
-        fields = {i: None for i in self.fields}
-        fields["_package"] = package
-        c = create_class(class_name, (), fields)
-        return c()
+        for i in self.fields:
+            o.__setattr__(i, None)
+
+        return o
 
 
 class Hessian2(object):
