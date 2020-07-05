@@ -1,20 +1,6 @@
 import datetime
 from .common import JavaClass
-from .util import camel_to_under_score, byte_length
-
-is_binary = lambda x: x == 0x41 or x == 0x42 or 0x20 <= x <= 0x2f or 0x34 <= x <= 0x37
-is_boolean = lambda x: x == 0x54 or x == 0x46
-is_class_def = lambda x: x == 0x43
-is_date = lambda x: x == 0x4a or x == 0x4b
-is_double = lambda x: x == 0x44 or x == 0x5b or x == 0x5c or x == 0x5d or x == 0x5e or x == 0x5f
-is_int = lambda x: x == 0x49 or 0x80 <= x <= 0xbf or 0xc0 <= x <= 0xcf or 0xd0 <= x <= 0xd7
-is_list = lambda x: x == 0x55 or x == 0x56 or x == 0x57 or x == 0x58 or 0x70 <= x <= 0x77 or 0x78 <= x <= 0x7f
-is_long = lambda x: x == 0x4c or 0xd8 <= x <= 0xef or 0xf0 <= x <= 0xff or 0x38 <= x <= 0x3f or x == 0x59
-is_map = lambda x: x == 0x48 or x == 0x4d
-is_null = lambda x: x == 0x4e
-is_object = lambda x: x == 0x4f or 0x60 <= x <= 0x6f
-is_ref = lambda x: x == 0x51
-is_string = lambda x: x == 0x52 or x == 0x53 or 0x00 <= x <= 0x1f or 0x30 <= x <= 0x33
+from .util import camel_to_under_score
 
 
 class ClassDef(object):
@@ -35,153 +21,169 @@ class ClassDef(object):
         return o
 
 
-class Hessian2(object):
+deserialize_relation = {}
+
+
+def register(condition):
+    def decorator(function):
+        deserialize_relation.update({condition: function})
+
+        def wrapper(self, *args, **kwargs):
+            return function(self, *args, **kwargs)
+
+        return wrapper
+
+    return decorator
+
+
+class Hessian2Deserializer(object):
     message = None
 
-    __offset = None
-    __class_def = None
-    __refs = None
+    cursor = 0
+
+    class_def = []
+    refs = []
 
     def __init__(self, message):
         self.message = message
-        self.__offset = 0
-        self.__class_def = []
-        self.__refs = []
+        self.cursor = 0
+        self.class_def, self.refs = [], []
 
     @property
-    def is_finished(self):
-        return self.__offset >= len(self.message)
+    def code(self):
+        return self.message[self.cursor]
 
-    def __move_cursor(self, length):
-        self.__offset += length
+    def move_cursor(self, scale):
+        self.cursor += scale
 
-    def __move_one_byte(self):
-        code = self.__code
-        self.__move_cursor(1)
+    def move_one_scale(self):
+        code = self.code
+        self.move_cursor(1)
         return code
 
-    @property
-    def __code(self):
-        return self.message[self.__offset]
-
-    def _decode_binary(self):
+    @register(lambda x: x == 0x41 or x == 0x42 or 0x20 <= x <= 0x2f or 0x34 <= x <= 0x37)
+    def deserialize_binary(self):
         #            # 8-bit binary data split into 64k chunks
         # binary     ::= x41 b1 b0 <binary-data> binary # non-final chunk
         #            ::= 'B' b1 b0 <binary-data>        # final chunk
         #            ::= [x20-x2f] <binary-data>        # binary data of length 0-15
         #            ::= [x34-x37] <binary-data>        # binary data of length 0-1023
 
-        code = self.__move_one_byte()
+        code = self.move_one_scale()
 
         if code == 0x41:
-            b1 = self.__move_one_byte()
-            b0 = self.__move_one_byte()
-            length = (b1 << 8) + b0
+            b1 = self.move_one_scale()
+            b0 = self.move_one_scale()
+            scale = (b1 << 8) + b0
         elif code == 0x42:
-            b1 = self.__move_one_byte()
-            b0 = self.__move_one_byte()
-            length = (b1 << 8) + b0
+            b1 = self.move_one_scale()
+            b0 = self.move_one_scale()
+            scale = (b1 << 8) + b0
         elif 0x20 <= code <= 0x2f:
-            length = code - 0x20
+            scale = code - 0x20
         elif 0x34 <= code <= 0x37:
-            b0 = self.__move_one_byte()
-            length = ((code - 0x34) << 8) + b0
+            b0 = self.move_one_scale()
+            scale = ((code - 0x34) << 8) + b0
         else:
             raise Exception("oop")
 
-        value = self.message[self.__offset:self.__offset + length]
-        self.__move_cursor(length)
+        value = self.message[self.cursor:self.cursor + scale]
+        self.move_cursor(scale)
         return value
 
-    def _decode_boolean(self):
+    @register(lambda x: x == 0x54 or x == 0x46)
+    def deserialize_boolean(self):
         #            # boolean true/false
         # boolean    ::= 'T'
         #            ::= 'F'
 
         relation = {0x54: True, 0x46: False}
 
-        code = self.__move_one_byte()
+        code = self.move_one_scale()
         value = relation.get(code)
 
         if value is None:
             raise Exception("oop")
         return value
 
-    def _decode_class_def(self):
+    @register(lambda x: x == 0x43)
+    def deserialize_class_def(self):
         #            # definition for an object (compact map)
         # class-def  ::= 'C' string int string*
 
-        self.__move_one_byte()
-        class_name = self._decode_string()
-        field_count = self._decode_int()
-        fields = [self._decode_string() for _ in range(field_count)]
+        self.move_one_scale()
+        class_name = self.deserialize_string()
+        field_count = self.deserialize_int()
+        fields = [self.deserialize_string() for _ in range(field_count)]
         class_def = ClassDef(class_name, fields)
-        self.__class_def.append(class_def)
+        self.class_def.append(class_def)
 
-        return self._decode_object()
+        return self.deserialize_object()
 
-    def _decode_object(self):
+    @register(lambda x: x == 0x4f or 0x60 <= x <= 0x6f)
+    def deserialize_object(self):
         #            # Object instance
         # object     ::= 'O' int value*
         # 	         ::= [x60-x6f] value*
-
-        code = self.__move_one_byte()
+        code = self.move_one_scale()
 
         if code == 0x4f:  # O
-            ref_index = self._decode_int()
+            ref_index = self.deserialize_int()
         elif 0x60 <= code <= 0x6f:
             ref_index = code - 0x60
         else:
             raise Exception("oop")
 
-        class_def = self.__class_def[ref_index]
+        class_def = self.class_def[ref_index]
         instance = class_def.new()
-        self.__refs.append(instance)
+        self.refs.append(instance)
 
         for i in class_def.fields:
-            value = self._decode_snippet()
+            value = self.deserialize()
             instance.__setattr__(i, value)
 
         return instance
 
-    def _decode_ref(self):
+    @register(lambda x: x == 0x51)
+    def deserialize_ref(self):
         #            # value reference (e.g. circular trees and graphs)
         # ref        ::= x51 int            # reference to nth map/list/object
 
-        self.__move_one_byte()
-        ref_index = self._decode_int()
-        return self.__refs[ref_index]
+        self.move_one_scale()
+        ref_index = self.deserialize_int()
+        return self.refs[ref_index]
 
-    def _decode_date(self):
+    @register(lambda x: x == 0x4a or x == 0x4b)
+    def deserialize_date(self):
         #            # time in UTC encoded as 64-bit long milliseconds since
         #            #  epoch
         # date       ::= x4a b7 b6 b5 b4 b3 b2 b1 b0
         #            ::= x4b b3 b2 b1 b0       # minutes since epoch
 
-        code = self.__move_one_byte()
-
+        code = self.move_one_scale()
         if code == 0x4a:
-            b7 = self.__move_one_byte()
-            b6 = self.__move_one_byte()
-            b5 = self.__move_one_byte()
-            b4 = self.__move_one_byte()
-            b3 = self.__move_one_byte()
-            b2 = self.__move_one_byte()
-            b1 = self.__move_one_byte()
-            b0 = self.__move_one_byte()
+            b7 = self.move_one_scale()
+            b6 = self.move_one_scale()
+            b5 = self.move_one_scale()
+            b4 = self.move_one_scale()
+            b3 = self.move_one_scale()
+            b2 = self.move_one_scale()
+            b1 = self.move_one_scale()
+            b0 = self.move_one_scale()
             value = (b7 << 56) + (b6 << 48) + (b5 << 40) + (b4 << 32) + (b3 << 24) + (b2 << 16) + (b1 << 8) + b0
         elif code == 0x4b:
-            b3 = self.__move_one_byte()
-            b2 = self.__move_one_byte()
-            b1 = self.__move_one_byte()
-            b0 = self.__move_one_byte()
+            b3 = self.move_one_scale()
+            b2 = self.move_one_scale()
+            b1 = self.move_one_scale()
+            b0 = self.move_one_scale()
             value = ((b3 << 24) + (b2 << 16) + (b1 << 8) + b0) * 60000
         else:
             raise Exception("oop")
 
         return datetime.datetime.fromtimestamp(value / 1000)
 
-    def _decode_double(self):
+    @register(lambda x: x == 0x44 or x == 0x5b or x == 0x5c or x == 0x5d or x == 0x5e or x == 0x5f)
+    def deserialize_double(self):
         #            # 64-bit IEEE double
         # double     ::= 'D' b7 b6 b5 b4 b3 b2 b1 b0
         #            ::= x5b                   # 0.0
@@ -190,68 +192,70 @@ class Hessian2(object):
         #            ::= x5e b1 b0             # short cast to double
         #            ::= x5f b3 b2 b1 b0       # 32-bit float cast to double
 
-        code = self.__move_one_byte()
+        code = self.move_one_scale()
 
         if code == 0x44:
-            b7 = self.__move_one_byte()
-            b6 = self.__move_one_byte()
-            b5 = self.__move_one_byte()
-            b4 = self.__move_one_byte()
-            b3 = self.__move_one_byte()
-            b2 = self.__move_one_byte()
-            b1 = self.__move_one_byte()
-            b0 = self.__move_one_byte()
+            b7 = self.move_one_scale()
+            b6 = self.move_one_scale()
+            b5 = self.move_one_scale()
+            b4 = self.move_one_scale()
+            b3 = self.move_one_scale()
+            b2 = self.move_one_scale()
+            b1 = self.move_one_scale()
+            b0 = self.move_one_scale()
             value = (b7 << 56) + (b6 << 48) + (b5 << 40) + (b4 << 32) + (b3 << 24) + (b2 << 16) + (b1 << 8) + b0
         elif code == 0x5b:
             value = 0.0
         elif code == 0x5c:
             value = 1.0
         elif code == 0x5d:
-            b0 = self.__move_one_byte()
+            b0 = self.move_one_scale()
             value = b0
         elif code == 0x5e:
-            b1 = self.__move_one_byte()
-            b0 = self.__move_one_byte()
+            b1 = self.move_one_scale()
+            b0 = self.move_one_scale()
             value = (b1 << 8) + b0
         elif code == 0x5f:
-            b3 = self.__move_one_byte()
-            b2 = self.__move_one_byte()
-            b1 = self.__move_one_byte()
-            b0 = self.__move_one_byte()
+            b3 = self.move_one_scale()
+            b2 = self.move_one_scale()
+            b1 = self.move_one_scale()
+            b0 = self.move_one_scale()
             value = (b3 << 24) + (b2 << 16) + (b1 << 8) + b0 * 0.001
         else:
             raise Exception("oop")
         return value
 
-    def _decode_int(self):
+    @register(lambda x: x == 0x49 or 0x80 <= x <= 0xbf or 0xc0 <= x <= 0xcf or 0xd0 <= x <= 0xd7)
+    def deserialize_int(self):
         #            # 32-bit signed integer
         # int        ::= 'I' b3 b2 b1 b0
         #            ::= [x80-xbf]             # -x10 to x3f
         #            ::= [xc0-xcf] b0          # -x800 to x7ff
         #            ::= [xd0-xd7] b1 b0       # -x40000 to x3ffff
 
-        code = self.__move_one_byte()
+        code = self.move_one_scale()
 
         if code == 0x49:
-            b3 = self.__move_one_byte()
-            b2 = self.__move_one_byte()
-            b1 = self.__move_one_byte()
-            b0 = self.__move_one_byte()
+            b3 = self.move_one_scale()
+            b2 = self.move_one_scale()
+            b1 = self.move_one_scale()
+            b0 = self.move_one_scale()
             value = (b3 << 24) + (b2 << 16) + (b1 << 8) + b0
         elif 0x80 <= code <= 0xbf:
             value = code - 0x90
         elif 0xc0 <= code <= 0xcf:
-            b0 = self.__move_one_byte()
+            b0 = self.move_one_scale()
             value = ((code - 0xc8) << 8) + b0
         elif 0xd0 <= code <= 0xd7:
-            b1 = self.__move_one_byte()
-            b0 = self.__move_one_byte()
+            b1 = self.move_one_scale()
+            b0 = self.move_one_scale()
             value = ((code - 0xd4) << 16) + (b1 << 8) + b0
         else:
             raise Exception("oop")
         return value
 
-    def _decode_list(self):
+    @register(lambda x: x == 0x55 or x == 0x56 or x == 0x57 or x == 0x58 or 0x70 <= x <= 0x77 or 0x78 <= x <= 0x7f)
+    def deserialize_list(self):
         #            # list/vector
         # list       ::= x55 type value* 'Z'   # variable-length list
         # 	         ::= 'V' type int value*   # fixed-length list
@@ -260,43 +264,44 @@ class Hessian2(object):
         # 	         ::= [x70-77] type value*  # fixed-length typed list
         # 	         ::= [x78-7f] value*       # fixed-length untyped list
 
-        code = self.__move_one_byte()
+        code = self.move_one_scale()
 
         result = []
-        self.__refs.append(result)
+        self.refs.append(result)
 
         if code == 0x55:
-            type = self._decode_snippet()
-            while self.__code != 0x5a:
-                result.append(self._decode_snippet())
-            self.__move_one_byte()
+            type = self.deserialize()
+            while self.code != 0x5a:
+                result.append(self.deserialize())
+            self.move_one_scale()
         elif code == 0x56:  # V
-            type = self._decode_snippet()
-            length = self.__move_one_byte() - 0x90
+            type = self.deserialize()
+            length = self.move_one_scale() - 0x90
             for _ in range(length):
-                result.append(self._decode_snippet())
+                result.append(self.deserialize())
         elif code == 0x57:
-            while self.__code != 0x5a:
-                result.append(self._decode_snippet())
-            self.__move_one_byte()
+            while self.code != 0x5a:
+                result.append(self.deserialize())
+            self.move_one_scale()
         elif code == 0x58:
-            length = self._decode_int()
+            length = self.deserialize_int()
             for i in range(length):
-                result.append(self._decode_snippet())
+                result.append(self.deserialize())
         elif 0x70 <= code <= 0x77:
             length = code - 0x70
-            type = self._decode_snippet()
+            type = self.deserialize()
             for _ in range(length):
-                result.append(self._decode_snippet())
+                result.append(self.deserialize())
         elif 0x78 <= code <= 0x7f:
             length = code - 0x78
             for _ in range(length):
-                result.append(self._decode_snippet())
+                result.append(self.deserialize())
         else:
             raise Exception("oop")
         return result
 
-    def _decode_long(self):
+    @register(lambda x: x == 0x4c or 0xd8 <= x <= 0xef or 0xf0 <= x <= 0xff or 0x38 <= x <= 0x3f or x == 0x59)
+    def deserialize_long(self):
         #            # 64-bit signed long integer
         # long       ::= 'L' b7 b6 b5 b4 b3 b2 b1 b0
         #            ::= [xd8-xef]             # -x08 to x0f
@@ -304,57 +309,58 @@ class Hessian2(object):
         #            ::= [x38-x3f] b1 b0       # -x40000 to x3ffff
         #            ::= x59 b3 b2 b1 b0       # 32-bit integer cast to long
 
-        code = self.__move_one_byte()
+        code = self.move_one_scale()
 
         if code == 0x4c:
-            b7 = self.__move_one_byte()
-            b6 = self.__move_one_byte()
-            b5 = self.__move_one_byte()
-            b4 = self.__move_one_byte()
-            b3 = self.__move_one_byte()
-            b2 = self.__move_one_byte()
-            b1 = self.__move_one_byte()
-            b0 = self.__move_one_byte()
+            b7 = self.move_one_scale()
+            b6 = self.move_one_scale()
+            b5 = self.move_one_scale()
+            b4 = self.move_one_scale()
+            b3 = self.move_one_scale()
+            b2 = self.move_one_scale()
+            b1 = self.move_one_scale()
+            b0 = self.move_one_scale()
             value = (b7 << 56) + (b6 << 48) + (b5 << 40) + (b4 << 32) + (b3 << 24) + (b2 << 16) + (b1 << 8) + b0
         elif 0xd8 <= code <= 0xef:
             value = code - 0xe0
         elif 0xf0 <= code <= 0xff:
-            b0 = self.__move_one_byte()
+            b0 = self.move_one_scale()
             value = ((code - 0xf8) << 8) + b0
         elif 0x38 <= code <= 0x3f:
-            b1 = self.__move_one_byte()
-            b0 = self.__move_one_byte()
+            b1 = self.move_one_scale()
+            b0 = self.move_one_scale()
             value = ((code - 0x3c) << 16) + (b1 << 8) + b0
         elif code == 0x59:
-            b3 = self.__move_one_byte()
-            b2 = self.__move_one_byte()
-            b1 = self.__move_one_byte()
-            b0 = self.__move_one_byte()
+            b3 = self.move_one_scale()
+            b2 = self.move_one_scale()
+            b1 = self.move_one_scale()
+            b0 = self.move_one_scale()
             value = (b3 << 24) + (b2 << 16) + (b1 << 8) + b0
         else:
             raise Exception("oop")
 
         return value
 
-    def _decode_map(self):
+    @register(lambda x: x == 0x48 or x == 0x4d)
+    def deserialize_map(self):
         #            # map/object
         # map        ::= 'M' type (value value)* 'Z'  # key, value map pairs
         # 	         ::= 'H' (value value)* 'Z'       # untyped key, value
 
-        code = self.__move_one_byte()
+        code = self.move_one_scale()
 
         values = []
         map = dict()
-        self.__refs.append(map)
+        self.refs.append(map)
 
         if code == 0x4d:  # M
-            type = self._decode_snippet()
+            type = self.deserialize()
         elif code == 0x48:  # H
             pass
 
-        while self.__code != 0x5a:
-            values.append(self._decode_snippet())
-        self.__move_one_byte()
+        while self.code != 0x5a:
+            values.append(self.deserialize())
+        self.move_one_scale()
 
         for i in range(int(len(values) / 2)):
             key, value = values[i * 2], values[i * 2 + 1]
@@ -362,74 +368,65 @@ class Hessian2(object):
 
         return map
 
-    def _decode_null(self):
-        #            # null value
-        # null       ::= 'N'
-
-        self.__move_one_byte()
+    @register(lambda x: x == 0x4e)
+    def deserialize_null(self):
+        self.move_one_scale()
         return None
 
-    def _decode_string(self):
+    @register(lambda x: x == 0x52 or x == 0x53 or 0x00 <= x <= 0x1f or 0x30 <= x <= 0x33)
+    def deserialize_string(self):
         #            # UTF-8 encoded character string split into 64k chunks
         # string     ::= x52 b1 b0 <utf8-data> string  # non-final chunk
         #            ::= 'S' b1 b0 <utf8-data>         # string of length   0-65535
         #            ::= [x00-x1f] <utf8-data>         # string of length   0-31
         #            ::= [x30-x33] b0 <utf8-data>      # string of length   0-1023
 
-        code = self.__move_one_byte()
+        # 嗅探 utf-8 使用的 byte 长度
+        def sniff_utf8_length(flag):
+            flag = format(flag, "#010b")
+
+            if flag.startswith("0b0") or flag.startswith("0b10"):
+                return 1
+            elif flag.startswith("0b110"):
+                return 2
+            elif flag.startswith("0b1110"):
+                return 3
+            elif flag.startswith("0b11110"):
+                return 4
+            else:
+                raise Exception("oop")
+
+        code = self.move_one_scale()
 
         if code == 0x52 or code == 0x53:
-            b1 = self.__move_one_byte()
-            b0 = self.__move_one_byte()
+            b1 = self.move_one_scale()
+            b0 = self.move_one_scale()
             count = (b1 << 8) + b0
         elif 0x00 <= code <= 0x1f:
             count = code
         elif 0x30 <= code <= 0x33:
-            count = self.__move_one_byte()
+            b0 = self.move_one_scale()
+            count = ((code - 0x30) << 8) + b0
         else:
             raise Exception("oop")
 
         string = []
         for i in range(count):
-            length = byte_length(self.__code)
-            string.append(str(self.message[self.__offset:self.__offset + length], encoding="utf-8"))
-            self.__move_cursor(length)
+            length = sniff_utf8_length(self.code)
+            string.append(str(self.message[self.cursor:self.cursor + length], encoding="utf-8"))
+            self.move_cursor(length)
 
         if code == 0x52:
-            tail = self._decode_string()
+            tail = self.deserialize_string()
             string.append(tail)
 
         return "".join(string)
 
-    def _decode_snippet(self):
-
-        relation = {
-            is_binary: self._decode_binary,
-            is_boolean: self._decode_boolean,
-            is_class_def: self._decode_class_def,
-            is_date: self._decode_date,
-            is_double: self._decode_double,
-            is_int: self._decode_int,
-            is_list: self._decode_list,
-            is_long: self._decode_long,
-            is_map: self._decode_map,
-            is_null: self._decode_null,
-            is_object: self._decode_object,
-            is_ref: self._decode_ref,
-            is_string: self._decode_string
-        }
-
-        for i in relation.keys():
-            if i(self.__code) is True:
-                function = relation.get(i)
-                value = function()
+    def deserialize(self):
+        for condition in deserialize_relation.keys():
+            if condition(self.code) is True:
+                function = deserialize_relation.get(condition)
+                value = function(self)
                 return value
-        raise Exception("have unkown flag")
-
-    def decode(self):
-        value = self._decode_snippet()
-
-        if not self.is_finished:
-            raise Exception("parse error")
-
-        return value
+        else:
+            raise Exception("have unkown hessian 2 code")

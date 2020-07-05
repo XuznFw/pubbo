@@ -1,6 +1,6 @@
 import socket
-from .common import JavaObject, GenericException
-from .serialization import RequestMessage, ResponseTypeEnum, Serialization, FastJSONSerialization
+from .common import JavaObject, RequestMessage, GenericException
+from .serialization import ResponseTypeEnum, FastJSONSerialization, HessianSerialization
 from .util import under_score_to_camel
 
 
@@ -37,19 +37,21 @@ class InterfaceProxy(object):
             message.method_parameter_types.append(i._class)
             message.method_arguments.append(i)
 
-        message = FastJSONSerialization().encode_request(message)
+        request_serialization = FastJSONSerialization()
+        message_byte = request_serialization.encode_request(message)
 
-        self.client.connect.send(message)
+        self.client.connect.send(message_byte)
 
-        response = b""
-        while True:
-            # TODO 处理恰好是这个size的情况
-            chunk = self.client.connect.recv(1024)
-            response += chunk
-            if len(chunk) < 1024:
-                break
+        response_serialization = HessianSerialization()
 
-        response = Serialization().decode_response(response)
+        head = self.client.connect.recv(16)
+        payload_length = response_serialization.deserialize_head(head)
+
+        payload = b""
+        while len(payload) != payload_length:
+            payload += self.client.connect.recv(1024)
+
+        response = response_serialization.deserialize_payload(payload)
 
         if response.type is ResponseTypeEnum.NULL:
             return response.message
@@ -58,7 +60,7 @@ class InterfaceProxy(object):
         elif response.type is ResponseTypeEnum.EXCEPTION:
             raise GenericException(response.message)
         else:
-            raise Exception("oop")
+            raise Exception("dubbo response type undefined")
 
     def __call__(self, method, *args, **kwargs):
         return self.invoke(method, *args, **kwargs)
@@ -71,9 +73,10 @@ class InterfaceProxy(object):
 class DubboClient(object):
     connect = None
 
-    def __init__(self, url: str):
+    def __init__(self, url: str, timeout=5):
         ip, port = url.split(":")
         self.connect = socket.socket()
+        self.connect.settimeout(timeout)
         self.connect.connect((ip, int(port)))
 
     def __del__(self):

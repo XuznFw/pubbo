@@ -1,8 +1,10 @@
 import random
 import json
-from .common import FlagEnum, RequestMessage, ResponseMessage, ResponseTypeEnum, ResponseStatusEnum, \
-    JavaObjectCamelJsonEncoder
-from .hessian import Hessian2
+from .common import ResponseMessage, ResponseTypeEnum, ResponseStatusEnum, JavaObjectCamelJsonEncoder
+from .hessian import Hessian2Deserializer
+
+REQUEST_FLAG = 0b10000000
+RESPONSE_FLAG = 0b00000000
 
 
 class Serialization(object):
@@ -27,68 +29,48 @@ class Serialization(object):
         second_position = second_position_bin.to_bytes(length=1, byteorder="big")
         return self.magic + second_position + self.status + self.request_id + self.data_length + self.variable_part
 
-    def encode(self, message):
-        if isinstance(message, (RequestMessage,)):
-            return self.encode_request(message)
-        elif isinstance(message, (ResponseMessage,)):
-            raise Exception("todo")
-        else:
-            raise Exception("oop")
-
-    def decode(self, flag: FlagEnum, message):
-        if flag is FlagEnum.REQUEST:
-            raise Exception("todo")
-        elif flag is FlagEnum.RESPONSE:
-            return self.decode_response(message)
-        else:
-            raise Exception("oop")
-
     def init_request(self):
-        self.flag = FlagEnum.REQUEST.value
+        self.flag = REQUEST_FLAG
         self.two_way = 0b01000000
         self.event = 0b00000000
         self.status = 0b00000000.to_bytes(length=1, byteorder="big")
         self.request_id = random.randint(0, 4294967295).to_bytes(length=8, byteorder="big")
 
-    def encode_request(self, message):
-        raise Exception("need to overwrite")
 
-    def decode_response(self, message):
-        serialization = None
-        for clazz in Serialization.__subclasses__():
-            if clazz.serialization_id == message[2]:
-                serialization = clazz()
-                break
-        if serialization is None:
-            raise Exception("not found serialization")
+class HessianSerialization(Serialization):
+    serialization_id = 0b00000010  # 2
+
+    def deserialize_head(self, message):
+
+        if len(message) != 16:
+            raise Exception("error dubbo response head")
 
         status = ResponseStatusEnum.response_status(message[3])
         if status is not ResponseStatusEnum.OK:
             raise Exception(status.name)
 
-        serialization.magic_high = message[0]
-        serialization.magic_low = message[1]
-        serialization.status = message[3]
-        serialization.request_id = message[4:12]
-        serialization.data_length = message[12:16]
-        serialization.variable_part = message[16:16 + int.from_bytes(serialization.data_length, byteorder='big')]
-        return serialization.decode_response(message)
+        self.magic_high = message[0]
+        self.magic_low = message[1]
+        self.status = message[3]
+        self.request_id = message[4:12]
+        self.data_length = message[12:16]
 
+        payload_length = int.from_bytes(message[12:16], byteorder='big')
+        return payload_length
 
-class HessianSerialization(Serialization):
-    serialization_id = 0b00000010  # 2
+    def deserialize_payload(self, message):
 
-    def decode_response(self, message):
+        payload_length = int.from_bytes(self.data_length, byteorder='big')
+        assert payload_length == len(message)
+
         response = ResponseMessage()
-
-        response_type = ResponseTypeEnum.response_type(Hessian2(self.variable_part[0:1]).decode())
-        response.type = response_type
+        response.type = ResponseTypeEnum.response_type(Hessian2Deserializer(message[0:1]).deserialize())
 
         if response.type is ResponseTypeEnum.NULL:
             response.message = None
             return response
 
-        response.message = Hessian2(self.variable_part[1:]).decode()
+        response.message = Hessian2Deserializer(message[1:]).deserialize()
         return response
 
 

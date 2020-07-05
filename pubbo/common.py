@@ -7,11 +7,6 @@ import json
 from .util import under_score_to_camel, camel_to_under_score
 
 
-class FlagEnum(enum.Enum):
-    REQUEST = 0b10000000
-    RESPONSE = 0b00000000
-
-
 class ResponseStatusEnum(enum.Enum):
     OK = 20
     CLIENT_TIMEOUT = 30
@@ -22,7 +17,7 @@ class ResponseStatusEnum(enum.Enum):
     SERVICE_ERROR = 70
     SERVER_ERROR = 80
     CLIENT_ERROR = 90
-    SERVER_THREADPOOL_EXHAUSTED_ERROR = 100
+    SERVER_THREAD_POOL_EXHAUSTED_ERROR = 100
 
     @staticmethod
     def response_status(value):
